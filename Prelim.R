@@ -159,6 +159,8 @@ gametest$hptdiff = gametest$ptsh - gametest$ptsv
 gametest$vptdiff = -gametest$hptdiff
 gametest$hmix = (gametest$ptsh/(gametest$ptsh+gametest$ptsv) + gametest$hprops)/2
 gametest$vmix = 1-gametest$hmix
+gametest$hptprop = gametest$ptsh/(gametest$ptsh+gametest$ptsv)
+gametest$vptprop = 1-gametest$hptprop
 
 mgames2014 = seasSubset(gametest, years = c(2011))
 mgames2013 = seasSubset(gametest, years = c(2010))
@@ -179,8 +181,8 @@ cumStrength = data.frame()
 for (i in 2004:2013){
   mgames = seasSubset(gametest, years = c(i))
   mgamesPlusOne = seasSubset(gametest, years = c(i+1))
-  mrank = as.data.frame(markovRank(mgames,mgames$h,mgames$v,mgames$hprops, mgames$vprops))
-  mptrank = as.data.frame(markovRank(mgames,mgames$h,mgames$v,mgames$ptsh/(mgames$ptsh+mgames$ptsv), mgames$ptsv/(mgames$ptsh+mgames$ptsv)))
+  mrank = as.data.frame(teamRank(markovRank(mgames,mgames$h,mgames$v,mgames$hprops, mgames$vprops)))
+  mptrank = as.data.frame(teamRank(markovRank(mgames,mgames$h,mgames$v,mgames$ptsh/(mgames$ptsh+mgames$ptsv), mgames$ptsv/(mgames$ptsh+mgames$ptsv))))
   b = matrix(nrow = 32, ncol = 3, dimnames = list(1:length(unique(c(mgames$h,mgames$v))),c("NextYrWins","PointDiff","ThisYrWins")))
   for (j in 1:length(unique(c(mgames$h,mgames$v)))){
     b[j,1] = sum(mgamesPlusOne$winner == mrank[j,"rn"])
@@ -198,4 +200,50 @@ summary(nextYrModel)
 
 ## Predict NFL games from rankings
 wklyStrength = data.frame()
+wklyStrengthGame = data.frame()
+for (i in 2005:2014){
+  for (j in 1:17){
+    games = subset(gametest, gametest$seas == i & gametest$wk == j)
+    gamesPrevThisYr = subset(gametest,gametest$seas == i & gametest$wk < j)
+    gamesLastYr = subset(gametest,gametest$seas == i-1)
+    if (j > 1){
+      prior = markovRank(gamesLastYr,gamesLastYr$h,gamesLastYr$v,gamesLastYr$hprops,gamesLastYr$vprops)
+      ranks = teamRank(markovRank(gamesPrevThisYr,gamesPrevThisYr$h,gamesPrevThisYr$v,gamesPrevThisYr$hprops,gamesPrevThisYr$vprops,prior))
+    }
+    else {
+      ranks = teamRank(markovRank(gamesLastYr,gamesLastYr$h,gamesLastYr$v,gamesLastYr$hprops,gamesLastYr$vprops))
+    }
+    yr = rep(i,32)
+    wk = rep(j,32)
+    setkey(ranks)
+    games$hRankGreater = as.numeric(ranks[games$h,pRank] > ranks[games$v,pRank] -5)
+    games$hRank = ranks[games$h,pRank]
+    games$vRank = ranks[games$v,pRank]
+    games$hwin = as.numeric(games$h == games$winner) + .5*(games$winner == "TIE")
+    wklyStrength = rbind(wklyStrength,cbind(ranks,yr,wk))
+    wklyStrengthGame = rbind(wklyStrengthGame,games)
+  }
+}
+
+
+wklyStrengthGame$spreadGreater = as.numeric((wklyStrengthGame$sprv > 0))
+table(wklyStrengthGame$hwin,wklyStrengthGame$hRankGreater)
+
+wklyStrengthGame$rankPredict = wklyStrengthGame$hwin == wklyStrengthGame$hRankGreater
+mean(wklyStrengthGame$hwin == wklyStrengthGame$hRankGreater)
+mean(wklyStrengthGame$spreadGreater == wklyStrengthGame$hRankGreater)
+
+table(wklyStrengthGame$spreadGreater == wklyStrengthGame$hwin,wklyStrengthGame$hRankGreater == wklyStrengthGame$hwin)
+mean(wklyStrengthGame$hwin == wklyStrengthGame$spreadGreater)
+
+winsOnly = subset(wklyStrengthGame,wklyStrengthGame$hwin != 0.5)
+gamePredictModel1 = glm(as.factor(hwin)~spreadGreater+hRankGreater,winsOnly, family = "binomial")
+xtable(summary(gamePredictModel1))
+
+gamePredictModel2 = glm(as.factor(hwin)~scale(sprv)+(scale(hRank-vRank)),winsOnly, family = "binomial")
+summary(gamePredictModel2)
+
+
+
+
 
