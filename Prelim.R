@@ -1,6 +1,6 @@
 #Load Data
-pbpALL = read.csv("PBP.csv")
-game = read.csv("GAME.csv")
+pbpALL = read.csv("nfl_00-14/csv/PBP.csv")
+game = read.csv("nfl_00-14/csv/GAME.csv")
 
 #New Field for Winner of Game
 for (i in 1:nrow(game)){
@@ -74,13 +74,19 @@ sum(wptest$winpredict == wptest$offwin)/nrow(wptest)
 firstgame = subset(wptest,gid == 3456)
 firstgame$hwinprob = firstgame$winprob*(firstgame$off == firstgame$h) + (1-firstgame$winprob)*(firstgame$off == firstgame$v)
 plot(c(3600 - firstgame$secLeft,max(3600-firstgame$secLeft)), c(firstgame$hwinprob,firstgame$hwin[1]), type = 'l', ylim = c(0,1), xlab = "Seconds Into Game", ylab = paste("P(", as.character(firstgame$h[1]),"Wins)"), main = paste(firstgame$seas[1]," ", firstgame$v[1], " @ ",firstgame$h[1] ))
+xx1 = c(rev(3600-firstgame$secLeft),3600-firstgame$secLeft)
+xx2 = c(3600 - firstgame$secLeft, rev(3600-firstgame$secLeft))
+yy1 = c(rep(0,length(firstgame$hwinprob)),firstgame$hwinprob)
+yy2 = c(firstgame$hwinprob,rep(1,length(firstgame$hwinprob)))
+polygon(xx1,yy1,col = rgb(1,2/5,0))
+polygon(xx2,yy2, col = "purple")
+text(900,.7,.374)
+text(2700,.45,.626)
 
 trapz(firstgame$secLeft,firstgame$hwinprob)/(trapz(firstgame$secLeft,firstgame$hwinprob) + trapz(firstgame$secLeft,1-firstgame$hwinprob))
 
 denbal = 3456
 nesea = 3989
-
-tebow = c(3017,3031, 3046, 3055,3068, 3095, 3108, 3125, 3181)
   
 for (i in 1:nrow(gametest)){
   thisgame = subset(wptest, wptest$gid == gametest$gid[i])
@@ -99,25 +105,42 @@ gametest$h = as.character(gametest$h)
 gametest$v = as.character(gametest$v)
 mgames = subset(gametest, gametest$seas %in% c(2005:2014))
 
-markovRank = function(data,home,visitor,homeStrength,visStrength){
-  nTeams = length(unique(c(home,visitor)))
-  nTeamGames = matrix(data = rep(0,nTeams), nrow= nTeams, ncol = 1, dimnames = list(unique(c(home,visitor))))
-  tMat = matrix(data = rep(0,nTeams^2), nrow = nTeams, ncol = nTeams, dimnames = list(unique(c(home,visitor)), unique(c(home,visitor))))
-  
-  for (i in 1:nTeams){
-    nTeamGames[i] = sum(home == rownames(nTeamGames)[i]) + sum(visitor == rownames(nTeamGames)[i])
+
+markovRank = function(data,home,visitor,homeStrength,visStrength,prior, priorWeight = 2){
+  if(missing(prior)){
+    nTeams = length(unique(c(home,visitor)))
+    a = 1/(2*nTeams - 2)
+    prior = matrix(rep(a,nTeams^2), ncol = nTeams) - diag(a,ncol = nTeams,nrow = nTeams) + diag(.5,ncol = nTeams,nrow = nTeams)
+    dimnames(prior) = list(unique(c(home,visitor)), unique(c(home,visitor)))
   }
-  
-  
-  for (i in 1:nrow(data)){
-    tMat[home[i],visitor[i]] =  tMat[home[i],visitor[i]] + (visStrength[i])/nTeamGames[home[i],1]
-    tMat[visitor[i],home[i]] =  tMat[visitor[i],home[i]] + (homeStrength[i])/nTeamGames[visitor[i],1]
+    nTeams = length(unique(c(home,visitor)))
+    nTeamGames = matrix(data = rep(0,nTeams), nrow= nTeams, ncol = 1, dimnames = list(unique(c(home,visitor))))
+    diag(prior) = 0
+    posterior = priorWeight*prior
+    
+    for (i in 1:nTeams){
+      nTeamGames[i] = sum(home == rownames(nTeamGames)[i]) + sum(visitor == rownames(nTeamGames)[i])
+    }
+    
+    
+    for (i in 1:nrow(data)){
+      posterior[home[i],visitor[i]] =  posterior[home[i],visitor[i]] + (visStrength[i])
+      posterior[visitor[i],home[i]] =  posterior[visitor[i],home[i]] + (homeStrength[i])
+    }
+    
+    for (i in 1:nrow(posterior)){
+      posterior[i,] = posterior[i,]/(nTeamGames[i]+priorWeight)
+    }
+    diag(posterior) = 1-rowSums(posterior)
+    posterior
   }
-  diag(tMat) = 1-rowSums(tMat)
+
   
-  "%^%"<-function(A,n){ 
-    if(n==1) A else {B<-A; for(i in (2:n)){A<-A%*%B}}; A 
-  } 
+"%^%"<-function(A,n){ 
+  if(n==1) A else {B<-A; for(i in (2:n)){A<-A%*%B}}; A 
+} 
+
+teamRank = function(tMat){
   rankings = as.matrix(1600*(tMat %^% 100)[1,])
   colnames(rankings) = c("pRank")
   library(data.table)
@@ -137,10 +160,14 @@ gametest$vptdiff = -gametest$hptdiff
 gametest$hmix = (gametest$ptsh/(gametest$ptsh+gametest$ptsv) + gametest$hprops)/2
 gametest$vmix = 1-gametest$hmix
 
-mgames = seasSubset(gametest, years = c(2011))
-markovRank(mgames,mgames$h,mgames$v,mgames$hprops, mgames$vprops)
-markovRank(mgames,mgames$h,mgames$v,mgames$ptsh/(mgames$ptsh+mgames$ptsv), mgames$ptsv/(mgames$ptsh+mgames$ptsv))
-markovRank(mgames,mgames$h,mgames$v,mgames$hmix, mgames$vmix)
+mgames2014 = seasSubset(gametest, years = c(2011))
+mgames2013 = seasSubset(gametest, years = c(2010))
+prior1 = markovRank(mgames2013,mgames2013$h,mgames2013$v,mgames2013$hprops, mgames2013$vprops)
+prior2 = markovRank(mgames2013,mgames2013$h,mgames2013$v,mgames2013$ptsh/(mgames2013$ptsh+mgames2013$ptsv), mgames2013$ptsv/(mgames2013$ptsh+mgames2013$ptsv))
+prior3 = markovRank(mgames2013,mgames2013$h,mgames2013$v,mgames2013$hmix, mgames2013$vmix)
+teamRank(markovRank(mgames2014,mgames2014$h,mgames2014$v,mgames2014$hprops, mgames2014$vprops, prior = prior1, priorWeight = 2))
+teamRank(markovRank(mgames2014,mgames2014$h,mgames2014$v,mgames2014$ptsh/(mgames2014$ptsh+mgames2014$ptsv), mgames2014$ptsv/(mgames2014$ptsh+mgames2014$ptsv), prior = prior2))
+teamRank(markovRank(mgames2014,mgames2014$h,mgames2014$v,mgames2014$hmix, mgames2014$vmix, prior = prior3))
 
 ##SEE WHETHER MY MODEL HAS ANY PREDICTIVE VALUE ##
 
@@ -152,7 +179,7 @@ cumStrength = data.frame()
 for (i in 2004:2013){
   mgames = seasSubset(gametest, years = c(i))
   mgamesPlusOne = seasSubset(gametest, years = c(i+1))
-  mrank = as.data.frame(markovRank(mgames,mgames$h,mgames$v,mgames$hmix, mgames$vmix))
+  mrank = as.data.frame(markovRank(mgames,mgames$h,mgames$v,mgames$hprops, mgames$vprops))
   mptrank = as.data.frame(markovRank(mgames,mgames$h,mgames$v,mgames$ptsh/(mgames$ptsh+mgames$ptsv), mgames$ptsv/(mgames$ptsh+mgames$ptsv)))
   b = matrix(nrow = 32, ncol = 3, dimnames = list(1:length(unique(c(mgames$h,mgames$v))),c("NextYrWins","PointDiff","ThisYrWins")))
   for (j in 1:length(unique(c(mgames$h,mgames$v)))){
@@ -166,5 +193,9 @@ for (i in 2004:2013){
   cumStrength = rbind(cumStrength,a)
 }
 
-crapModel = glm(cumStrength$NextYrWins~scale(cumStrength$pRank) + scale(cumStrength$ThisYrWins) , data = cumStrength, family = "poisson")
-summary(crapModel)
+nextYrModel = glm(cumStrength$NextYrWins~scale(cumStrength$pRank) + scale(cumStrength$PointDiff) , data = cumStrength, family = "poisson")
+summary(nextYrModel)
+
+## Predict NFL games from rankings
+wklyStrength = data.frame()
+
